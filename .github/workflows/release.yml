@@ -1,0 +1,70 @@
+name: Release
+
+# Tag-triggered release pipeline (SPEC.md §11.2): pushing a v*.*.* tag is the
+# entire release action. Pre-release suffixes (-rc.N, -beta.N) produce GitHub
+# pre-releases.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      # Guard: the tag must equal the workspace version (SPEC.md §11.2 step 1).
+      - name: Verify tag matches workspace version
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          VER=$(cargo metadata --format-version 1 --no-deps | jq -r '.packages[] | select(.name == "rss-cli") | .version')
+          echo "tag=$TAG workspace=$VER"
+          if [ "$TAG" != "$VER" ]; then
+            echo "::error::tag v$TAG does not match workspace version $VER"
+            exit 1
+          fi
+          echo "VERSION=$VER" >> "$GITHUB_ENV"
+
+      # Full gate: a release is never cut from an untested tree.
+      - name: Run full test suite
+        run: cargo test --workspace --all-targets
+
+      - name: Build release binary
+        run: cargo build --release --locked
+
+      - name: Package zip + checksums
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp target/release/rss.exe "dist/RustySpaceSniffer.exe"
+          cd dist
+          ZIP="RustySpaceSniffer-v${VERSION}-windows-x64.zip"
+          7z a "$ZIP" RustySpaceSniffer.exe
+          sha256sum "$ZIP" RustySpaceSniffer.exe > SHA256SUMS.txt
+          ls -la
+
+      # Signing: skipped until an Authenticode certificate is configured
+      # (SPEC.md §11.2 step 5 documents the unsigned fallback: checksums ship
+      # regardless, and the gap must be stated in the release notes).
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/RustySpaceSniffer-v${{ env.VERSION }}-windows-x64.zip
+            dist/RustySpaceSniffer.exe
+            dist/SHA256SUMS.txt
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          body: |
+            **Unsigned build** — verify against `SHA256SUMS.txt`. Authenticode
+            signing arrives once a certificate is configured (SPEC.md §11.2).
