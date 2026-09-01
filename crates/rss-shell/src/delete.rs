@@ -176,12 +176,20 @@ pub fn execute_plan(
 mod tests {
     use super::*;
 
-    /// Create a temp tree under $HOME so the freedesktop "home trash" applies
-    /// regardless of how /tmp is mounted (the trash crate picks a trash folder
-    /// per mount point; files on the home filesystem always use it).
+    /// Create a temp tree where the platform trash applies. On Unix the
+    /// freedesktop "home trash" only applies on the home filesystem (the trash
+    /// crate picks a trash folder per mount point), so use $HOME; on Windows
+    /// the Recycle Bin works per-drive, so a plain tempdir is fine.
     fn home_tempdir() -> tempfile::TempDir {
-        let home = std::env::var_os("HOME").expect("HOME must be set for trash tests");
-        tempfile::tempdir_in(home).expect("create tempdir under $HOME")
+        #[cfg(windows)]
+        {
+            tempfile::tempdir().expect("create tempdir")
+        }
+        #[cfg(not(windows))]
+        {
+            let home = std::env::var_os("HOME").expect("HOME must be set for trash tests");
+            tempfile::tempdir_in(home).expect("create tempdir under $HOME")
+        }
     }
 
     #[test]
