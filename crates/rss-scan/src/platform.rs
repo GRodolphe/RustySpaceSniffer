@@ -90,7 +90,7 @@ pub(crate) fn meta_values(path: &Path, md: &dua_core::Metadata, is_file: bool) -
 /// Returns the on-disk size of a (possibly compressed/sparse) file, or
 /// `None` on error.
 #[cfg(windows)]
-fn compressed_file_size(path: &Path) -> Option<u64> {
+pub(crate) fn compressed_file_size(path: &Path) -> Option<u64> {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::Foundation::GetLastError;
     use windows_sys::Win32::Storage::FileSystem::GetCompressedFileSizeW;

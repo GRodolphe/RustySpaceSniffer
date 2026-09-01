@@ -1,0 +1,28 @@
+[package]
+name = "rss-export-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+# Standalone workspace: keeps the fuzz crate out of the main workspace's
+# `crates/*` member set (cargo-fuzz convention).
+[workspace]
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+rss-export = { path = ".." }
+
+[[bin]]
+name = "rssnap_parse"
+path = "fuzz_targets/rssnap_parse.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "template_render"
+path = "fuzz_targets/template_render.rs"
+test = false
+doc = false

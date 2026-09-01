@@ -1,20 +1,27 @@
-//! M1-scope export of a scanned tree: flat CSV (FR-8.4) and nested JSON
-//! (FR-8.5), per SPEC.md §4.8.
+//! Export of a scanned tree: flat CSV (FR-8.4), nested JSON (FR-8.5), text
+//! reports via a SpaceSniffer-compatible template engine (FR-8.2/FR-8.3), and
+//! the `.rssnap` binary snapshot format (FR-8.7/FR-8.8), per SPEC.md §4.8 and
+//! §5.7.
 //!
-//! Both exporters walk the subtree rooted at a given node depth-first, with
-//! siblings ordered by descending size (allocated by default, see
-//! [`SizeMode`]). Reported sizes and counts are the node's aggregates
-//! (`agg_*` in `rss-core`), so directories report their whole subtree and the
-//! allocated size includes NTFS Alternate Data Stream bytes.
+//! The CSV/JSON exporters walk the subtree rooted at a given node
+//! depth-first, with siblings ordered by descending size (allocated by
+//! default, see [`SizeMode`]). Reported sizes and counts are the node's
+//! aggregates (`agg_*` in `rss-core`), so directories report their whole
+//! subtree and the allocated size includes NTFS Alternate Data Stream bytes.
 //!
-//! The SpaceSniffer-compatible template engine (FR-8.2) and the `.rssnap`
-//! binary snapshot format (FR-8.7/FR-8.8) are milestone M7 and out of scope
-//! here.
+//! The template engine ([`render_template`], [`ExportTemplate`]) implements a
+//! safe, side-effect-free subset of SpaceSniffer's export mini-language; the
+//! snapshot module ([`Snapshot`]) provides save/load of a full tree including
+//! tags (FR-5.3), the view's filter string, zoom path, and scan metadata,
+//! with a hardened, allocation-capped, checksummed parser (SPEC.md §9.1).
 #![forbid(unsafe_code)]
 
 mod csv_export;
 mod error;
+pub mod fuzzing;
 mod json_export;
+mod snapshot;
+mod template;
 mod time;
 mod traverse;
 
@@ -23,6 +30,11 @@ use std::io::Write;
 use rss_core::{NodeId, Tree};
 
 pub use error::ExportError;
+pub use snapshot::{ScanMetadata, Snapshot, SnapshotError};
+pub use template::{
+    age_string, builtin_templates, find_builtin_template, human_size, render_template, BlockSort,
+    ExportTemplate, SortField, TemplateContext, TemplateError,
+};
 
 /// Which size the export sorts siblings by and treats as primary.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]

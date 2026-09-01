@@ -1,0 +1,47 @@
+[package]
+name = "rss-app"
+description = "GUI application (eframe/egui) and CLI dispatch; produces the `rss` binary (SPEC.md §5.1)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "rss"
+path = "src/main.rs"
+
+[dependencies]
+rss-core = { path = "../rss-core" }
+rss-treemap = { path = "../rss-treemap" }
+rss-filter = { path = "../rss-filter" }
+rss-scan = { path = "../rss-scan" }
+rss-export = { path = "../rss-export" }
+rss-watch = { path = "../rss-watch" }
+rss-shell = { path = "../rss-shell" }
+eframe = "0.36"
+egui = "0.36"
+rfd = "0.15"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+clap = { version = "4", features = ["derive"] }
+anyhow = "1"
+crossbeam-channel = "0.5"
+# Safe volume free/total space (statvfs / GetDiskFreeSpaceExW under the
+# hood) for the FR-3.13 free/unknown elements — keeps `unsafe` out of
+# rss-app per SPEC.md §5.9.
+fs2 = "0.4"
+# "Open" context-menu action: launch elements with the default application.
+open = "5"
+
+[dev-dependencies]
+egui_kittest = { version = "0.36", features = ["eframe"] }
+tempfile = "3"
+# Matches egui/kittest's accesskit so UI tests can query widgets by role.
+accesskit = "0.24"
+
+# Ground-truth hardlink identity needs GetFileInformationByHandle; std does
+# not expose a stable file-index API on Windows.
+[target.'cfg(windows)'.dev-dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+] }

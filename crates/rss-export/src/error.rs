@@ -2,6 +2,8 @@
 
 use rss_core::NodeId;
 
+use crate::template::TemplateError;
+
 /// Errors returned by the exporters.
 #[derive(Debug, thiserror::Error)]
 pub enum ExportError {
@@ -17,4 +19,7 @@ pub enum ExportError {
     /// JSON serialization failed.
     #[error("JSON export failed: {0}")]
     Json(#[from] serde_json::Error),
+    /// Template report rendering failed.
+    #[error("template export failed: {0}")]
+    Template(#[from] TemplateError),
 }

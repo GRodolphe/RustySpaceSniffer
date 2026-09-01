@@ -1,11 +1,15 @@
-//! `rss` — RustySpaceSniffer headless CLI (SPEC.md §4.9, FR-9.2).
+//! `rss` command-line parsing and dispatch (SPEC.md §4.9, §5.1).
 //!
-//! M1 scope (SPEC.md §12): `rss scan <PATH> --export csv|json --out <FILE>`
-//! scans with the `WalkScanner` and exports the resulting tree. Exit codes:
-//! 0 on success, 1 on scan/export error, 2 on usage error (clap).
+//! Migrated from the M1 `rss-cli` crate in M2. Dispatch rule:
 //!
-//! The GUI automation command set (`load`/`filter`/`save`/`autoclose`) and
-//! console attachment (FR-9.3) arrive with `rss-app` in later milestones.
+//! - `rss` (no arguments) opens the GUI start dialog (§4.1).
+//! - `rss scan <PATH> --export csv|json [--out <FILE> | OUT]` runs headless
+//!   with the `WalkScanner` and exports the resulting tree. Exit codes:
+//!   0 on success, 1 on scan/export error, 2 on usage error (clap).
+//! - `rss --headless` without a subcommand is a usage error (exit 2).
+//!
+//! The GUI automation command set (`load`/`filter`/`save`/`autoclose`,
+//! FR-9.1) and console attachment (FR-9.3) arrive in later milestones.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -14,20 +18,22 @@ use anyhow::Context;
 use clap::{Parser, Subcommand, ValueEnum};
 use rss_export::{ExportOptions, SizeMode};
 
+use crate::fmt::format_bytes;
+
 #[derive(Parser)]
 #[command(
     name = "rss",
     version,
-    about = "RustySpaceSniffer — disk space treemap analyzer (M1 headless CLI)"
+    about = "RustySpaceSniffer — disk space treemap analyzer"
 )]
 struct Cli {
-    /// Run without a GUI (accepted for forward compatibility with FR-9.2;
-    /// the M1 CLI is always headless).
+    /// Run without a GUI (FR-9.2). Currently only meaningful together with a
+    /// subcommand; `rss` with no arguments always opens the GUI.
     #[arg(long, global = true)]
     headless: bool,
 
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 }
 
 #[derive(Subcommand)]
@@ -52,7 +58,7 @@ enum Commands {
 
         /// Report logical instead of allocated sizes (reserved, FR-9.5).
         /// Both sizes are always exported, so this flag currently only
-        /// affects the human summary.
+        /// affects the human summary and sibling ordering.
         #[arg(long)]
         logical: bool,
     },
@@ -66,20 +72,45 @@ enum ExportFormat {
     Json,
 }
 
-fn main() -> ExitCode {
+/// Binary entry point: parse argv and dispatch to the GUI or a headless
+/// subcommand.
+pub fn main_entry() -> ExitCode {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    // SpaceSniffer-style meta-command form (FR-9.1), e.g.
+    // `rss scan c:\ filter *.jpg export "Grouped by folder" out.txt autoclose`.
+    // Distinguished from the M1 clap form by bare keyword tokens.
+    if crate::cli_meta::is_meta_form(&args) {
+        return crate::cli_meta::run(&args);
+    }
     let cli = Cli::parse();
-    match run(cli) {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(err) => {
-            eprintln!("rss: error: {err:#}");
-            ExitCode::from(1)
+    match cli.command {
+        None => {
+            if cli.headless {
+                // FR-9.2: headless with nothing to do is a usage error.
+                eprintln!(
+                    "rss: --headless requires a subcommand, e.g. \
+                     `rss --headless scan <PATH> --export csv --out <FILE>`"
+                );
+                ExitCode::from(2)
+            } else if let Err(err) = crate::gui::run_gui() {
+                eprintln!("rss: error: {err:#}");
+                ExitCode::from(1)
+            } else {
+                ExitCode::SUCCESS
+            }
         }
+        Some(command) => match run(command) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(err) => {
+                eprintln!("rss: error: {err:#}");
+                ExitCode::from(1)
+            }
+        },
     }
 }
 
-fn run(cli: Cli) -> anyhow::Result<()> {
-    let _headless = cli.headless; // M1 is always headless; flag is forward-compat.
-    match cli.command {
+fn run(command: Commands) -> anyhow::Result<()> {
+    match command {
         Commands::Scan {
             path,
             export,
@@ -175,20 +206,4 @@ fn scan_and_export(
         }
     }
     Ok(())
-}
-
-/// Human-readable binary-unit size (1024-based, matching the FR-4.4 units).
-fn format_bytes(bytes: u64) -> String {
-    const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
-    let mut value = bytes as f64;
-    let mut unit = 0;
-    while value >= 1024.0 && unit < UNITS.len() - 1 {
-        value /= 1024.0;
-        unit += 1;
-    }
-    if unit == 0 {
-        format!("{bytes} B")
-    } else {
-        format!("{value:.1} {}", UNITS[unit])
-    }
 }

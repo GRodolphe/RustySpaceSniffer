@@ -123,9 +123,17 @@ impl ScanEngine for WalkScanner {
         );
 
         for item in walk {
+            // FR-2.3: cooperative pause — block between events until
+            // resumed; cancellation always wins.
+            opts.wait_while_paused();
             if opts.is_cancelled() {
+                // Do NOT break: dua-core's worker pool reports entry batches
+                // over a bounded channel whose senders block when full, so
+                // dropping the iterator early can deadlock the pool join in
+                // `Walk::drop`. Keep draining (cheaply, without emitting)
+                // until the iterator is exhausted instead.
                 summary.cancelled = true;
-                break;
+                continue;
             }
             let entry = match item {
                 Ok(entry) => entry,
@@ -269,6 +277,71 @@ fn map_entry(
     params
 }
 
+/// Stat a single path into [`NodeParams`] (FR-7.1): used by the live-update
+/// path to re-stat watcher-touched entries without a rescan.
+///
+/// Applies the same mapping rules as the walk (directories carry no own
+/// size, symlinks count as marked file nodes whose targets are never
+/// followed, access failures map to `Unaccessible`). Hardlink dedup is **not**
+/// applied here — dedup is a per-scan seen-set, meaningless for a one-off
+/// re-stat; a hardlink that newly becomes a second link may briefly
+/// double-count until the next rescan (documented M4 limitation).
+///
+/// Returns `None` when the path vanished or cannot be statted (callers treat
+/// that as a remove).
+pub fn stat_entry(path: &Path) -> Option<NodeParams> {
+    let md = std::fs::symlink_metadata(path).ok()?;
+    let ft = md.file_type();
+    let name = path.file_name().map_or_else(
+        || path.to_string_lossy().into_owned(),
+        |n| n.to_string_lossy().into_owned(),
+    );
+
+    let mut flags = NodeFlags::default();
+    if ft.is_symlink() {
+        flags.insert(NodeFlags::REPARSE_POINT);
+    }
+    let kind = if ft.is_dir() {
+        NodeKind::Directory
+    } else {
+        NodeKind::File
+    };
+    let (logical, allocated) = if kind == NodeKind::Directory {
+        (0, 0)
+    } else {
+        entry_sizes(path, &md, ft.is_file())
+    };
+
+    let mut params = NodeParams::named(name, kind)
+        .sizes(logical, allocated)
+        .flags(flags);
+    params.created = platform::system_time_to_filetime(md.created());
+    params.accessed = platform::system_time_to_filetime(md.accessed());
+    params.modified = platform::system_time_to_filetime(md.modified());
+    Some(params)
+}
+
+/// Own sizes for a non-directory entry from std metadata (cfg-split).
+#[cfg(unix)]
+fn entry_sizes(_path: &Path, md: &std::fs::Metadata, _is_file: bool) -> (u64, u64) {
+    use std::os::unix::fs::MetadataExt;
+    (md.len(), md.blocks().saturating_mul(512))
+}
+
+/// Windows: std metadata lacks allocated size; approximate it with
+/// `GetCompressedFileSizeW` (SPEC.md §5.4's documented fallback). The next
+/// full scan reconciles exact `AllocationSize` values.
+#[cfg(windows)]
+fn entry_sizes(path: &Path, md: &std::fs::Metadata, is_file: bool) -> (u64, u64) {
+    let logical = md.len();
+    let allocated = if is_file && logical > 0 {
+        crate::platform::compressed_file_size(path).unwrap_or(logical)
+    } else {
+        logical
+    };
+    (logical, allocated)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -404,6 +477,99 @@ mod tests {
         assert_eq!(node.params.kind, NodeKind::Unaccessible);
         assert!(node.params.flags.contains(NodeFlags::ACCESS_DENIED));
         assert_eq!(node.params.logical_size, 0);
+    }
+
+    #[test]
+    fn pause_blocks_and_resume_completes() {
+        let dir = tempfile::tempdir().unwrap();
+        for i in 0..16 {
+            write_file(&dir.path().join(format!("f{i}.bin")), &[0u8; 16]);
+        }
+        let pause = Arc::new(AtomicBool::new(true));
+        let cancel = Arc::new(AtomicBool::new(false));
+        let opts = ScanOptions {
+            pause: Some(pause.clone()),
+            cancel: Some(cancel.clone()),
+            ..Default::default()
+        };
+        let root = dir.path().to_path_buf();
+        let handle = std::thread::spawn(move || WalkScanner::new().scan(&root, &opts, &mut |_| {}));
+        // Paused: the scan must not complete while the flag is set.
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        assert!(!handle.is_finished(), "paused scan must block");
+        // Resume: the scan completes with all entries.
+        pause.store(false, Ordering::Relaxed);
+        let summary = handle.join().unwrap().unwrap();
+        assert!(!summary.cancelled);
+        assert_eq!(summary.files, 16);
+
+        // A paused scan stays cancellable (FR-2.2 + FR-2.3).
+        let pause = Arc::new(AtomicBool::new(true));
+        let cancel = Arc::new(AtomicBool::new(false));
+        let opts = ScanOptions {
+            pause: Some(pause.clone()),
+            cancel: Some(cancel.clone()),
+            ..Default::default()
+        };
+        let root = dir.path().to_path_buf();
+        let handle = std::thread::spawn(move || WalkScanner::new().scan(&root, &opts, &mut |_| {}));
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        cancel.store(true, Ordering::Relaxed);
+        let summary = handle.join().unwrap().unwrap();
+        assert!(summary.cancelled);
+    }
+
+    #[test]
+    fn stat_entry_matches_walk_mapping() {
+        let dir = tempfile::tempdir().unwrap();
+        write_file(&dir.path().join("f.bin"), &[0u8; 100]);
+        std::fs::create_dir(dir.path().join("d")).unwrap();
+
+        let file = stat_entry(&dir.path().join("f.bin")).unwrap();
+        assert_eq!(file.kind, NodeKind::File);
+        assert_eq!(file.logical_size, 100);
+        assert!(file.allocated_size >= file.logical_size);
+        assert!(file.modified > 0);
+
+        let dirp = stat_entry(&dir.path().join("d")).unwrap();
+        assert_eq!(dirp.kind, NodeKind::Directory);
+        assert_eq!(dirp.logical_size, 0);
+
+        // Vanished paths yield None (callers treat as remove).
+        assert!(stat_entry(&dir.path().join("gone.bin")).is_none());
+    }
+
+    /// Regression: cancelling mid-scan must not deadlock (dua-core's worker
+    /// pool blocks on a bounded event channel; dropping the walk early hangs
+    /// the pool join — the scanner drains instead).
+    #[test]
+    fn cancel_mid_scan_does_not_hang() {
+        let dir = tempfile::tempdir().unwrap();
+        for d in 0..40 {
+            let sub = dir.path().join(format!("d{d:02}"));
+            std::fs::create_dir_all(&sub).unwrap();
+            for f in 0..100 {
+                write_file(&sub.join(format!("f{f}.bin")), &[0u8; 64]);
+            }
+        }
+        let cancel = Arc::new(AtomicBool::new(false));
+        let opts = ScanOptions {
+            cancel: Some(cancel.clone()),
+            ..Default::default()
+        };
+        let root = dir.path().to_path_buf();
+        let handle = std::thread::spawn(move || {
+            let mut scanner = WalkScanner::new();
+            scanner.scan(&root, &opts, &mut |_| {})
+        });
+        // Let the walk get going, then cancel mid-flight.
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        cancel.store(true, Ordering::Relaxed);
+        let summary = handle
+            .join()
+            .expect("cancelled scan thread must not hang")
+            .expect("cancel is not an error");
+        assert!(summary.cancelled);
     }
 
     #[test]

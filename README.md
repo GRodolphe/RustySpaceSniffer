@@ -11,24 +11,23 @@ behavior — no original code or assets. The full design is specified in
 
 ## Status
 
-Early development. Milestone **M1** is complete (see
-[SPEC.md §12](SPEC.md) for the roadmap):
+All v1 milestones (M1–M9, [SPEC.md §12](SPEC.md)) are implemented:
 
 | Milestone | Scope | Status |
 |---|---|---|
 | M1 | Workspace, core model, walk scanner, filter DSL, CSV/JSON export, headless CLI | Done |
-| M2 | Treemap core + egui GUI shell | Next |
-| M3 | Filters & tags in the UI | Planned |
-| M4 | Live scanning UX (progressive, cancel/pause, multi-view) | Planned |
-| M5 | MFT fast path (WizTree-class NTFS scanning) + elevation | Planned |
-| M6 | Live updates (USN journal / ReadDirectoryChangesExW) | Planned |
-| M7 | Export templates + hardened `.rssnap` snapshots | Planned |
-| M8 | File operations (shell menu, recycle-bin delete) | Planned |
-| M9 | Polish: dark mode, DPI, accessibility, release packaging | Planned |
+| M2 | Treemap core + egui GUI shell (zoom/nav/tooltips/breadcrumbs) | Done |
+| M3 | Filters & tags UI (SpaceSniffer filter DSL, dim/hide, CTRL+1..4 tags, color styles) | Done |
+| M4 | Live scanning UX (progressive population, pause/resume/cancel, flash, multi-view, zoom animation, live watcher updates) | Done |
+| M5 | MFT fast path + elevation detection (cfg(windows); compile-checked, runtime validation pending on Windows CI) | Done |
+| M6 | Live updates (ReadDirectoryChangesW via notify; USN journal watcher, cfg(windows)) | Done |
+| M7 | Export templates ("Grouped by folder"), hardened `.rssnap` snapshots, CLI meta-commands | Done |
+| M8 | File ops (shell context menu, recycle-bin delete with filter-warning dialog) | Done |
+| M9 | Settings + TOML persistence, dark/light themes with per-theme palettes, log console, accessibility pass | Done |
 
-Planned highlights: single portable `.exe`, SpaceSniffer-compatible filter
+Feature highlights: single portable `.exe` (release pipeline ready), SpaceSniffer-compatible filter
 syntax (`*.jpg;>1mb;<3months;|:yellow`), dark mode, MFT-direct scanning on
-NTFS, safe in-app deletion, and a true headless CLI.
+NTFS (elevated), safe in-app deletion, and a true headless CLI.
 
 ## Building
 
@@ -41,15 +40,24 @@ cargo build --workspace
 cargo test --workspace
 ```
 
-## CLI usage (M1)
+## Usage
+
+Launch with no arguments for the GUI:
+
+```sh
+rss
+```
+
+Headless scanning and export:
 
 ```sh
 # Scan a path and export CSV / JSON
 rss scan C:\Users\you --export csv --out report.csv
 rss --headless scan /some/dir --export json report.json
-```
 
-The GUI arrives with milestone M2.
+# SpaceSniffer-style meta-command form (filter + named export template)
+rss scan C:\Users\you filter "*.jpg;>1mb" export "Grouped by folder" report.txt autoclose
+```
 
 ## CI/CD
 

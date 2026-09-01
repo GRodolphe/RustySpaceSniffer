@@ -1,0 +1,26 @@
+[package]
+name = "rss-shell"
+description = "Shell integration: context menu, recycle-bin delete, elevation (SPEC.md §5.1, FR-6.x)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+rss-core = { path = "../rss-core" }
+trash = "5"
+thiserror = "2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+    "Win32_UI_Shell",
+    "Win32_UI_Shell_Common",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_System_Com",
+    "Win32_Security",
+    "Win32_System_Registry",
+] }
+
+[dev-dependencies]
+tempfile = "3"

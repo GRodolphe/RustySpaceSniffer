@@ -355,3 +355,106 @@ fn cli_exit_codes() {
         .unwrap();
     assert_eq!(status.code(), Some(1));
 }
+
+/// SPEC.md §12 M7 exit criterion: the SpaceSniffer-style meta-command form
+/// `rss scan <path> filter <expr> export "<config>" <out> autoclose` works.
+#[test]
+fn cli_meta_command_scan_filter_export_autoclose() {
+    let tmp = tempfile::tempdir().unwrap();
+    let fixture = build_synthetic_tree(tmp.path());
+    let out = tmp.path().join("report.txt");
+
+    let status = Command::new(env!("CARGO_BIN_EXE_rss"))
+        .args([
+            "scan".as_ref(),
+            fixture.root.as_os_str(),
+            "filter".as_ref(),
+            "*.bin".as_ref(),
+            "export".as_ref(),
+            "Grouped by folder".as_ref(),
+            out.as_os_str(),
+            "autoclose".as_ref(),
+        ])
+        .status()
+        .unwrap();
+    assert!(status.success(), "meta-command chain must exit 0");
+
+    let text = std::fs::read_to_string(&out).unwrap();
+    assert!(text.contains("Grouped by folder report"));
+    assert!(text.contains("# filter: *.bin"), "filter stated (FR-8.1)");
+    assert!(text.contains("a1.bin"));
+}
+
+/// The meta form also covers `save` + `load` round-trips.
+#[test]
+fn cli_meta_save_and_load_snapshot() {
+    let tmp = tempfile::tempdir().unwrap();
+    let fixture = build_synthetic_tree(tmp.path());
+    let snap = tmp.path().join("view.rssnap");
+    let out = tmp.path().join("report.txt");
+
+    let status = Command::new(env!("CARGO_BIN_EXE_rss"))
+        .args([
+            "scan".as_ref(),
+            fixture.root.as_os_str(),
+            "save".as_ref(),
+            snap.as_os_str(),
+        ])
+        .status()
+        .unwrap();
+    assert!(status.success());
+    assert!(snap.exists());
+
+    let status = Command::new(env!("CARGO_BIN_EXE_rss"))
+        .args([
+            "load".as_ref(),
+            snap.as_os_str(),
+            "export".as_ref(),
+            "Plain list".as_ref(),
+            out.as_os_str(),
+        ])
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let text = std::fs::read_to_string(&out).unwrap();
+    assert!(text.contains("a1.bin"));
+}
+
+/// Meta-form usage errors exit 2; unknown template exits 1.
+#[test]
+fn cli_meta_exit_codes() {
+    let tmp = tempfile::tempdir().unwrap();
+    let fixture = build_synthetic_tree(tmp.path());
+
+    // filter without a preceding scan -> 1 (operational error).
+    let status = Command::new(env!("CARGO_BIN_EXE_rss"))
+        .args(["load".as_ref(), tmp.path().join("none.rssnap").as_os_str()])
+        .status()
+        .unwrap();
+    assert_eq!(status.code(), Some(1));
+
+    // Unknown command keyword -> 2.
+    let status = Command::new(env!("CARGO_BIN_EXE_rss"))
+        .args([
+            "scan".as_ref(),
+            fixture.root.as_os_str(),
+            "bogus".as_ref(),
+            "x".as_ref(),
+        ])
+        .status()
+        .unwrap();
+    assert_eq!(status.code(), Some(2));
+
+    // Unknown export config (case-sensitive, FR-9.1) -> 1.
+    let status = Command::new(env!("CARGO_BIN_EXE_rss"))
+        .args([
+            "scan".as_ref(),
+            fixture.root.as_os_str(),
+            "export".as_ref(),
+            "grouped by folder".as_ref(), // lowercase: not found
+            tmp.path().join("x.txt").as_os_str(),
+        ])
+        .status()
+        .unwrap();
+    assert_eq!(status.code(), Some(1));
+}

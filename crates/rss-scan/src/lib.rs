@@ -1,10 +1,9 @@
 //! Scanning engine for RustySpaceSniffer (SPEC.md §5.4).
 //!
 //! Provides the [`ScanEngine`] trait, the [`ScanEvent`] stream that engines
-//! emit, the M1 [`WalkScanner`] (parallel directory walk backed by
-//! `dua-core`), and the [`select_engine`] fallback chain. The `MftScanner`
-//! fast path is milestone M5; for now [`select_engine`] honestly returns
-//! [`EngineChoice::Walk`] everywhere (see its TODO).
+//! emit, the [`WalkScanner`] (parallel directory walk backed by `dua-core`),
+//! the [`MftScanner`] NTFS fast path (cfg(windows), FR-2.4), and the
+//! [`plan_engine`]/[`select_engine`] fallback chain (FR-2.5).
 //!
 //! Per-node scan errors (access denied, vanished entries) are **data, not
 //! failures** (SPEC.md §5.9): they surface as [`ScanEvent::Error`] items and
@@ -20,11 +19,22 @@ use std::time::Duration;
 use rss_core::NodeParams;
 
 mod builder;
+#[cfg(windows)]
+mod mft;
+// Pure decision logic and USN record parsing for the MFT path. Compiled (and
+// unit-tested) on every host, but only consumed by cfg(windows) code — hence
+// the scoped allow on non-Windows.
+#[cfg_attr(not(windows), allow(dead_code))]
+mod ntfs;
 mod platform;
+#[cfg_attr(not(windows), allow(dead_code))]
+mod usn;
 mod walk;
 
 pub use builder::TreeBuilder;
-pub use walk::WalkScanner;
+#[cfg(windows)]
+pub use mft::MftScanner;
+pub use walk::{stat_entry, WalkScanner};
 
 /// A filesystem node discovered during a scan, streamed to the model.
 #[derive(Clone, Debug)]
@@ -127,6 +137,10 @@ pub struct ScanOptions {
     /// Cooperative cancellation flag. When set, the scan stops at the next
     /// event and returns a partial [`ScanSummary`] with `cancelled == true`.
     pub cancel: Option<Arc<AtomicBool>>,
+    /// Cooperative pause flag (FR-2.3). While set, the scan blocks between
+    /// events until the flag clears; cancellation still wins, so a paused
+    /// scan can always be cancelled.
+    pub pause: Option<Arc<AtomicBool>>,
     /// Progress callback, invoked on the scanner thread at throttled
     /// intervals (and once at the end). Interior mutability is the caller's
     /// business so the callback can be shared across threads.
@@ -139,6 +153,22 @@ impl ScanOptions {
         self.cancel
             .as_ref()
             .is_some_and(|c| c.load(std::sync::atomic::Ordering::Relaxed))
+    }
+
+    /// Whether the scan is paused (FR-2.3).
+    pub fn is_paused(&self) -> bool {
+        self.pause
+            .as_ref()
+            .is_some_and(|p| p.load(std::sync::atomic::Ordering::Relaxed))
+    }
+
+    /// Block while paused (FR-2.3), polling at a coarse interval.
+    /// Cancellation always breaks the wait, so a paused scan stays
+    /// cancellable. Returns immediately when no pause flag is configured.
+    pub fn wait_while_paused(&self) {
+        while self.is_paused() && !self.is_cancelled() {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
     }
 }
 
@@ -157,6 +187,13 @@ pub enum ScanError {
         /// OS error description.
         message: String,
     },
+    /// The MFT scanner was asked to scan a path that is not on a local
+    /// drive-letter volume (UNC, relative path, ...).
+    #[error("not a local drive-letter volume path: {0}")]
+    NotALocalVolume(PathBuf),
+    /// A volume-level operation failed (volume open, FSCTL, record parse).
+    #[error("volume operation failed: {0}")]
+    VolumeError(String),
 }
 
 /// A scanning engine streams [`ScanEvent`]s for the subtree under a root
@@ -181,29 +218,41 @@ pub enum EngineChoice {
     Mft,
 }
 
-/// Pick the scan engine for `root` per the SPEC.md §5.4 fallback chain:
-/// `Mft` on NTFS volumes when elevated, `Walk` otherwise.
+/// Result of the engine fallback chain for a path (SPEC.md §5.4, FR-2.5).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct EnginePlan {
+    /// The engine to use.
+    pub choice: EngineChoice,
+    /// True when the volume is NTFS but the MFT fast path needs elevation:
+    /// the caller should offer "rescan as administrator" (FR-2.5).
+    pub mft_requires_elevation: bool,
+}
+
+/// Plan the engine for `root` per the SPEC.md §5.4 fallback chain, probing
+/// the volume filesystem and (on Windows) volume-handle accessibility.
 ///
-/// Non-Windows hosts always get [`EngineChoice::Walk`].
+/// Non-Windows hosts always get the walker.
+pub fn plan_engine(root: &Path) -> EnginePlan {
+    plan_engine_impl(root)
+}
+
+/// Pick the scan engine for `root`: `Mft` on NTFS volumes when elevated,
+/// `Walk` otherwise. See [`plan_engine`] for the full decision.
 pub fn select_engine(root: &Path) -> EngineChoice {
-    select_engine_impl(root)
+    plan_engine(root).choice
 }
 
 #[cfg(not(windows))]
-fn select_engine_impl(_root: &Path) -> EngineChoice {
-    EngineChoice::Walk
+fn plan_engine_impl(_root: &Path) -> EnginePlan {
+    EnginePlan {
+        choice: EngineChoice::Walk,
+        mft_requires_elevation: false,
+    }
 }
 
 #[cfg(windows)]
-fn select_engine_impl(_root: &Path) -> EngineChoice {
-    // TODO(FR-2.4/FR-2.5): detect the volume filesystem via
-    // GetVolumeInformationW (`lpFileSystemNameBuffer == "NTFS"`) and the
-    // elevation state via GetTokenInformation(TokenElevation) or a probe-open
-    // of `\\.\X:`; return EngineChoice::Mft only when both hold, and let the
-    // caller offer "rescan as administrator" when MFT was available but
-    // skipped. The MftScanner itself is milestone M5, so this stub honestly
-    // falls back to the walker on every volume for now.
-    EngineChoice::Walk
+fn plan_engine_impl(root: &Path) -> EnginePlan {
+    mft::plan_engine(root)
 }
 
 /// Scan `root` with the default engine and fold the event stream into an
