@@ -78,7 +78,12 @@ fn allocated_size(_md: &std::fs::Metadata) -> Option<u64> {
 
 fn measure(root: &Path) -> Truth {
     let mut truth = Truth {
+        // Ground truth only exists where `allocated_size` can derive it
+        // (Unix). On Windows it must start as None, not Some(0).
+        #[cfg(unix)]
         allocated: Some(0),
+        #[cfg(windows)]
+        allocated: None,
         ..Default::default()
     };
     let mut seen: HashSet<(u64, u64)> = HashSet::new();
