@@ -10,6 +10,14 @@ use rss_export::{export_csv, export_csv_with, export_json, ExportOptions, SizeMo
 
 const T0: i64 = 1_700_000_000; // 2023-11-14T22:13:20Z
 
+/// Exported paths use platform-native separators (`\` on Windows, matching
+/// SpaceSniffer's convention), while the golden fixtures are written with
+/// `/`. Normalize the actual output before comparing. Safe here because no
+/// fixture name contains a literal backslash.
+fn norm_paths(text: &str) -> String {
+    text.replace('\\', "/")
+}
+
 /// Build the golden fixture tree (all sibling sizes distinct, so the expected
 /// order does not depend on tie-breaking):
 ///
@@ -82,7 +90,7 @@ fn csv_byte_exact_golden() {
     let mut out = Vec::new();
     export_csv(&tree, root, &mut out).unwrap();
     let actual = String::from_utf8(out).unwrap();
-    assert_eq!(actual, GOLDEN_CSV);
+    assert_eq!(norm_paths(&actual), GOLDEN_CSV);
 }
 
 #[test]
@@ -98,7 +106,7 @@ fn csv_size_mode_logical_changes_sibling_order() {
         &mut out,
     )
     .unwrap();
-    let text = String::from_utf8(out).unwrap();
+    let text = norm_paths(&String::from_utf8(out).unwrap());
     let rows: Vec<&str> = text.lines().collect();
     // Logical sizes: big.bin 10_000, ユニコード 2_048, docs 1_000.
     // Row 0 is the header, row 1 the root.
@@ -142,7 +150,7 @@ fn csv_allocated_size_includes_ads() {
 
     let mut out = Vec::new();
     export_csv(&tree, root, &mut out).unwrap();
-    let text = String::from_utf8(out).unwrap();
+    let text = norm_paths(&String::from_utf8(out).unwrap());
     let row = text.lines().nth(2).unwrap();
     // allocated_size = 4_096 own + 2_048 ADS = 6_144. A default-constructed
     // FileTime of 0 is the FILETIME epoch, 1601-01-01.
@@ -179,7 +187,7 @@ fn json_round_trip_structure() {
 
     // Nested structure; comma/quote and unicode names intact.
     let docs = &children[2];
-    assert_eq!(docs["path"], "root/docs");
+    assert_eq!(norm_paths(docs["path"].as_str().unwrap()), "root/docs");
     let docs_children = docs["children"].as_array().unwrap();
     let docs_names: Vec<&str> = docs_children
         .iter()
@@ -191,7 +199,10 @@ fn json_round_trip_structure() {
 
     let data = &children[1]["children"][0];
     assert_eq!(data["name"], "データ.bin");
-    assert_eq!(data["path"], "root/ユニコード/データ.bin");
+    assert_eq!(
+        norm_paths(data["path"].as_str().unwrap()),
+        "root/ユニコード/データ.bin"
+    );
     assert_eq!(data["children"].as_array().unwrap().len(), 0);
 }
 
