@@ -68,7 +68,9 @@ fn render(tpl: &ExportTemplate) -> String {
     };
     let mut out = Vec::new();
     render_template(&tree, root, tpl, &ctx, &mut out).unwrap();
-    String::from_utf8(out).unwrap()
+    // Paths use platform-native separators (`\` on Windows); normalize so the
+    // `/`-based assertions hold on every platform (same helper as golden.rs).
+    String::from_utf8(out).unwrap().replace('\\', "/")
 }
 
 /// Render and strip the FR-8.1 prologue (three `#` lines).
@@ -398,7 +400,7 @@ fn header_states_view_and_filter() {
     };
     let mut out = Vec::new();
     render_template(&tree, docs, &template("<%file%>{&br}"), &ctx, &mut out).unwrap();
-    let text = String::from_utf8(out).unwrap();
+    let text = String::from_utf8(out).unwrap().replace('\\', "/");
     let lines: Vec<&str> = text.lines().collect();
     assert_eq!(lines[0], "# RustySpaceSniffer export (template: test)");
     assert_eq!(lines[1], "# view: root/docs");
@@ -439,7 +441,7 @@ fn unicode_names_render() {
             &mut buf,
         )
         .unwrap();
-        String::from_utf8(buf).unwrap()
+        String::from_utf8(buf).unwrap().replace('\\', "/")
     };
     let body: Vec<&str> = out.lines().skip(3).collect();
     assert_eq!(body[0], "ルート=7");
