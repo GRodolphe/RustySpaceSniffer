@@ -148,17 +148,41 @@ fn is_ntfs_volume(volume_root: &Path) -> bool {
 mod tests {
     use super::*;
 
+    #[cfg(not(windows))]
     #[test]
     fn local_paths_use_rdcw_off_windows() {
         let dir = tempfile::tempdir().unwrap();
         assert_eq!(classify(dir.path()), WatcherChoice::Rdcw);
     }
 
+    /// On Windows the choice depends on elevation + filesystem: elevated NTFS
+    /// gets the USN journal (the correct answer per SPEC §5.5), everything
+    /// else gets RDCW. Both are valid; only Unavailable would be wrong.
+    #[cfg(windows)]
+    #[test]
+    fn local_paths_use_rdcw_or_usn_on_windows() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_ne!(classify(dir.path()), WatcherChoice::Unavailable);
+    }
+
+    #[cfg(not(windows))]
     #[test]
     fn select_returns_a_working_rdcw_for_local_paths() {
         let dir = tempfile::tempdir().unwrap();
         let watcher = select_watcher(dir.path()).unwrap();
         assert_eq!(watcher.kind(), crate::WatcherKind::Rdcw);
+        assert_eq!(watcher.root(), dir.path());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn select_returns_a_watcher_for_local_paths_on_windows() {
+        let dir = tempfile::tempdir().unwrap();
+        let watcher = select_watcher(dir.path()).unwrap();
+        assert!(matches!(
+            watcher.kind(),
+            crate::WatcherKind::Rdcw | crate::WatcherKind::UsnJournal
+        ));
         assert_eq!(watcher.root(), dir.path());
     }
 
