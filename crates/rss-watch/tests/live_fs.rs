@@ -2,11 +2,15 @@
 //! FR-7.4). These run on the Linux development host via notify's inotify
 //! backend; the same code paths wrap `ReadDirectoryChangesW` on Windows.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(not(windows))]
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use crossbeam_channel::Receiver;
-use rss_watch::{select_watcher, RdcwWatcher, WatchEvent, Watcher, WatcherKind};
+#[cfg(not(windows))]
+use rss_watch::{select_watcher, WatcherKind};
+use rss_watch::{RdcwWatcher, WatchEvent, Watcher};
 
 /// Generous per-phase ceiling so loaded CI machines don't flake.
 const PHASE_TIMEOUT: Duration = Duration::from_secs(15);
@@ -208,6 +212,11 @@ fn watching_a_missing_root_fails() {
     assert!(watcher.start().is_err());
 }
 
+/// Exercises select_watcher end-to-end with a live RDCW watcher. Unix-only:
+/// on Windows an elevated NTFS runner correctly selects UsnJournal (SPEC
+/// §5.5), and the USN watcher is compile-checked but not runtime-tested here —
+/// the selection logic itself is covered by select.rs's unit tests.
+#[cfg(not(windows))]
 #[test]
 fn select_watcher_picks_rdcw_for_local_paths() {
     let dir = tempfile::tempdir().unwrap();
