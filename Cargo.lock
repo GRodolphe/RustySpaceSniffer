@@ -314,6 +314,7 @@ dependencies = [
  "rss-filter",
  "rss-scan",
  "tempfile",
+ "windows-sys",
 ]
 
 [[package]]
