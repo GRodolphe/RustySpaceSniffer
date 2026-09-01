@@ -1,0 +1,25 @@
+[package]
+name = "rss-scan"
+description = "Scanning engine: ScanEngine trait, WalkScanner, MFT fast path (SPEC.md §5.4)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+rss-core = { path = "../rss-core" }
+dua-core = "3.3.1" # pinned to the version resolved after the first successful build
+crossbeam-channel = "0.5"
+rustc-hash = "2"
+thiserror = "2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+    "Win32_System_Ioctl",
+    "Win32_Security",
+] }
+
+[dev-dependencies]
+tempfile = "3"

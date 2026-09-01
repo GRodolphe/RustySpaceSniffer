@@ -1,0 +1,8 @@
+[package]
+name = "rss-core"
+description = "Core data model for RustySpaceSniffer (SPEC.md §5.2)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]

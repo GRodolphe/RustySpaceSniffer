@@ -1,0 +1,10 @@
+[package]
+name = "rss-filter"
+description = "SpaceSniffer-compatible filter DSL parser and evaluator (SPEC.md §4.4, §5.6)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+rss-core = { path = "../rss-core" }
+thiserror = "2"
