@@ -768,8 +768,13 @@ fn watcher_events_update_tree() {
 /// excluded from zoomed views.
 #[test]
 fn free_space_element_at_drive_root() {
-    // "/" is a volume root on this host (diskspace::is_volume_root).
-    let mut tree = Tree::with_root(NodeParams::named("/", NodeKind::Directory));
+    // Platform volume root: "/" on Unix, "C:\" on Windows (the CI runner's
+    // temp and work dirs live on C:).
+    #[cfg(not(windows))]
+    let root_path = "/";
+    #[cfg(windows)]
+    let root_path = "C:\\";
+    let mut tree = Tree::with_root(NodeParams::named(root_path, NodeKind::Directory));
     let root = tree.root().unwrap();
     tree.add_child(
         root,
@@ -778,9 +783,12 @@ fn free_space_element_at_drive_root() {
 
     let mut harness = make_harness();
     harness.run_ok();
-    harness
-        .state_mut()
-        .attach_tree(tree, root, "/".into(), rss_scan::ScanSummary::default());
+    harness.state_mut().attach_tree(
+        tree,
+        root,
+        root_path.into(),
+        rss_scan::ScanSummary::default(),
+    );
     harness.run_steps(3); // sync fetches real drive space for "/"
 
     let view = harness.state().view().unwrap();

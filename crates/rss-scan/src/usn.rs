@@ -73,9 +73,11 @@ fn i64_at(buf: &[u8], off: usize) -> i64 {
 }
 
 fn decode_name(buf: &[u8]) -> String {
+    let (units, _remainder) = buf.as_chunks::<2>();
     String::from_utf16_lossy(
-        &buf.chunks_exact(2)
-            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+        &units
+            .iter()
+            .map(|c| u16::from_le_bytes(*c))
             .collect::<Vec<u16>>(),
     )
 }
